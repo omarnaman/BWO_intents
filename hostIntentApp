@@ -1,0 +1,294 @@
+#!/usr/bin/python
+
+import json
+import requests
+import sys
+import time 
+import signal
+
+
+BASE_URL = 'http://localhost:8181/onos/v1'
+AUTH = ('onos', 'rocks')
+IDP = 'of:000000000000000'
+
+def signal_handler(sig, frame):
+    print "\n{}Deleting flows before exiting{}\n".format(COLORS.RED, COLORS.RESET)
+    STATE.reset()
+    sys.exit(0)
+
+class STATE:
+    RULES = None
+
+    @staticmethod
+    def reset():
+        for rule in STATE.RULES:
+            rule.delete()
+
+    @staticmethod
+    def is_valid():
+        for rule in STATE.RULES:
+            valid = rule.is_valid()
+            if not valid:
+                print "Rule {}, Valid: {}\n{}Recalculating path{}".format(rule.id, valid, COLORS.CYAN, COLORS.RESET)
+                return False
+        return True
+
+class COLORS:
+    CYAN = "\033[36m"
+    GREEN = "\033[32m"
+    RED = "\033[31m"
+    RESET = "\033[0m"
+
+class Host:
+    KEY_MAC = "mac"
+    KEY_LOC = "locations"
+    KEY_EID = "elementId"
+    KEY_PORT = "port"
+
+    def __init__(self, id):
+        self.id = id
+        if not self.id.endswith("/None"):
+            self.id += "/None"
+        self._get_self()
+
+    def _get_self(self):
+        url = "{}/hosts/{}".format(BASE_URL, self.id)
+        res = requests.get(url, auth=AUTH)
+        res =res.json()
+        self.mac = res[self.KEY_MAC]
+        locations = res[self.KEY_LOC]
+        self.locations = []
+        for location in locations:
+            device = Switch()
+            device.fill(location[self.KEY_EID], location[self.KEY_PORT])
+            self.locations.append(device)
+        
+        print self
+
+    def switch(self):
+        if len(self.locations) > 0:
+            return self.locations[0]
+        return None
+
+    def __repr__(self):
+        return "ID: {}\nMAC: {}\nLocations: {}\n".format(self.id, self.mac, self.locations)
+
+class Switch:
+    def __init__(self, json = None):
+        if json is not None:
+            self.device = json['device']
+            self.port = json['port']
+
+    def fill(self, id, port):
+        self.device = id
+        self.port = port
+        
+
+    def __repr__(self):
+        return 'Device: {}, Port: {}'.format(
+                self.device,
+                self.port)
+
+class Link:
+    def __init__(self, json):
+        self.state = json['state']
+        self._type = json['type']
+        self.src = Switch(json['src'])
+        self.dst = Switch(json['dst'])
+
+    def __repr__(self):
+        return 'State: {}\nType: {}\nSource: {}\nDestination: {}'.format(
+                    self.state, self._type, self.src, self.dst)
+
+class Path:
+    def __init__(self, json):
+        self.links = []
+        self.cost = json['cost']
+        for link in json['links']:
+            self.links.append(Link(link))
+    
+    def __repr__(self):
+        return 'Cost: {}\nLinks:\n{}'\
+                .format(self.cost, self.links)
+
+class Flow:
+    KEY_PRIO = "priority"
+    KEY_TIME = "timeout"
+    KEY_PERM = "isPermanent"
+    KEY_DEVID = "deviceId"
+    KEY_TREAT = "treatment"
+    KEY_TYPE = "type"
+    KEY_PORT = "port"
+    KEY_INST = "instructions"
+    KEY_SELC = "selector"
+    KEY_CRIT = "criteria"
+    KEY_MAC = "mac"
+    KEY_ENA = "isEnabled"
+
+
+    TYPE_IN_PORT = "IN_PORT"
+    TYPE_OUT_PORT = "OUT_PORT"
+    TYPE_SRC_MAC = "ETH_SRC" 
+    TYPE_DST_MAC = "ETH_DST" 
+
+    
+        
+    def __init__(self, device_id, src_mac, dst_mac, out_port, in_port = None):
+        self.src_mac = src_mac
+        self.dst_mac = dst_mac
+        self.in_port = in_port
+        self.out_port = out_port
+        self.priority = 40001
+        self.timeout = 0
+        self.isPermanent = True
+        self.deviceId = device_id
+        self.isReverse = False
+
+    def json(self):
+        res = {}
+        res[self.KEY_PRIO] = self.priority
+        res[self.KEY_TIME] = self.timeout
+        res[self.KEY_PERM] = self.isPermanent
+        res[self.KEY_DEVID] = self.deviceId
+        
+        treatment = {}
+        instructions = []
+        inst = {}
+        inst[self.KEY_TYPE] = "OUTPUT"
+        inst[self.KEY_PORT] = str(self.out_port)
+        instructions.append(inst)
+        treatment[self.KEY_INST] = instructions
+
+        crit_port = None
+        if self.in_port is not None:
+            crit_port = {
+                self.KEY_TYPE: "IN_PORT",
+                self.KEY_PORT: str(self.in_port),
+                }
+        crit_src = {
+            self.KEY_TYPE: self.TYPE_SRC_MAC,
+            self.KEY_MAC: self.src_mac 
+        }
+        crit_dst = {
+            self.KEY_TYPE: self.TYPE_DST_MAC,
+            self.KEY_MAC: self.dst_mac 
+        }
+        criteria = [crit_dst, crit_src]
+        if crit_port is not None:
+            criteria.append(crit_port)
+    
+        res[self.KEY_SELC] = {self.KEY_CRIT: criteria}
+        res[self.KEY_TREAT] = treatment
+        return json.dumps(res, indent=2)
+    
+    def apply(self):
+        data = self.json()
+        url = "{}/flows/{}".format(BASE_URL, self.deviceId)
+        rep = requests.post(url, data, auth=AUTH)
+        self.id = rep.headers["Location"].split('/')[-1]
+        return rep
+    
+    def reverse(self):
+        reverse_flow = Flow(self.deviceId, self.dst_mac, self.src_mac, self.in_port, self.out_port)
+        reverse_flow.isReverse = True
+
+        return reverse_flow
+
+    def delete(self):
+        url = "{}/flows/{}/{}".format(BASE_URL, self.deviceId, self.id)
+        res = requests.delete(url, auth=AUTH)
+        return res
+
+
+
+    def is_valid(self):
+        if self.isReverse:
+            return True
+
+        url = "{}/devices/{}/ports".format(BASE_URL, self.deviceId)
+        res = requests.get(url, auth=AUTH).json()
+        ports = {}
+        for port in res["ports"]:
+            try:
+                ports.update({port[self.KEY_PORT]: port[self.KEY_ENA]})
+            except:
+                pass
+        if not ports[self.in_port]:
+            print "port {} of device {} is {}down{}".format(self.in_port, self.deviceId, COLORS.RED, COLORS.RESET)
+        if not ports[self.out_port]:
+            print "port {} of device {} is {}down{}".format(self.out_port, self.deviceId, COLORS.RED, COLORS.RESET)
+        return ports[self.in_port] and ports[self.out_port]
+        
+
+    def __repr__(self):
+        return self.json()
+
+def flow_rules_from_path(path, src_host, dst_host):
+    rules = []
+    
+    if path is None or len(path.links) == 0: 
+        return
+    
+    for i, link in enumerate(path.links):
+        if i==0:
+            in_port = src_host.switch().port
+        else:
+            in_port = path.links[i - 1].dst.port
+        rule = Flow(link.src.device, src_host.mac, dst_host.mac, link.src.port, in_port)    
+        rules.append(rule)
+    
+    last_link = path.links[-1]
+    last_rule = Flow(
+        last_link.dst.device, 
+        src_host.mac, dst_host.mac, 
+        dst_host.switch().port, 
+        last_link.dst.port)
+
+    rules.append(last_rule)
+    
+    reverse_rules = []
+    for rule in rules:
+        reverse_rules.append(rule.reverse())
+    rules += reverse_rules
+    
+    return rules
+
+        
+def get_paths(src, dst):
+    url = '{}/paths/{}/{}'.format(BASE_URL, src, dst)
+    reply = requests.get(url, auth=AUTH).json()
+    paths = []
+    for path in reply['paths']:
+        paths.append(Path(path))
+
+    return paths
+
+def main(src_id, dst_id):
+    src_host = Host(src_id)
+    dst_host = Host(dst_id)
+    paths = get_paths(src_host.switch().device, dst_host.switch().device)
+    print "Path:\n{}".format(paths[0])
+    STATE.RULES = flow_rules_from_path(paths[0], src_host, dst_host)
+    for rule in STATE.RULES:
+        rule.apply()
+    while True:
+        time.sleep(5)
+ 
+        if not STATE.is_valid():
+            STATE.reset()
+            paths = get_paths(src_host.switch().device, dst_host.switch().device)
+            print "New path:\n{}".format(paths[0])
+            STATE.RULES = flow_rules_from_path(paths[0], src_host, dst_host)
+            for rule in STATE.RULES:
+                rule.apply()
+
+if __name__ == "__main__":
+
+    signal.signal(signal.SIGINT, signal_handler)
+
+    src_id = "00:00:00:00:00:01"
+    dst_id = "00:00:00:00:00:02"
+    if len(sys.argv) > 1:
+        src_id = str(sys.argv[1])
+        dst_id = str(sys.argv[2])
+    main(src_id, dst_id)
