@@ -42,6 +42,11 @@ class Graph():
 
     nodes = property(get_nodes)
 
+    def init_hops_from_edgelist(self):
+        self.hops = dict.fromkeys(self.nodes)
+        for key in self.hops:
+            self.hops[key] = dict.fromkeys(self.nodes, None)
+
     def bfs(self, source):
         q = [source]
         vis = dict.fromkeys(self.nodes, False)
@@ -132,7 +137,8 @@ class Graph():
 
 def main():
     g = Graph("g.graph")
-    g.astar("1", "5", 5)
+    # g.astar("1", "5", 5)
+    print(g.hops)
 
 if __name__=="__main__":
     main()
