@@ -15,7 +15,7 @@ class Graph(nx.Graph):
         if file is not None:
             self.read_edgelist(file)
 
-
+    
     def sorted_edgelist(self, node, destination, dec = False):
         l = []
         for u in self[node]:
@@ -162,7 +162,7 @@ class Graph(nx.Graph):
             self.allocate_flow(path, req)
             flows.append((intent, path))
         return flows
-        
+    
     def topk_greedy_allocate(self, intents):
         self.reset_capacities()
         intents = sorted(intents, key=lambda x: x.required_bw, reverse=True)
@@ -232,6 +232,40 @@ class Graph(nx.Graph):
     def reset_capacities(self):
         for u, v in self.edges:
             self[u][v]["remaining_capacity"] = self[u][v]["max_capacity"]
+
+
+
+        
+def main(graph_file="g.graph", intents_file=None, online=False):
+    if intents_file is None:
+       intents = [Intent("h1", "h2", 7), Intent("3", "h1", 2)]
+    else:
+        intents = []
+        with(open(intents_file, "r")) as f:
+            lines = f.readlines()
+            for line in lines:
+                if line[0] == '#':
+                    continue
+                src, dst, req = line.split()
+                intents.append(Intent(src, dst, req))
+    g = Graph(graph_file)
+    if not online:
+        can = g.topk_greedy_allocate(intents)
+        if can == False:
+            print("No Solution")
+            return False
+        for u, v in g.edges:
+            print(f"{u}->{v}: {g[u][v]['remaining_capacity']}")
+        return True
+    elif online:
+        for i, intent in enumerate(intents):
+            res = g.allocate_single(intent)
+            if res == False:
+                print(f"Recalculating on intent {{{i}}}")
+                can = g.topk_greedy_allocate(intents[:i+1])
+                if can == False:
+                    print("No Solution")
+        return True
 
 if __name__=="__main__":
     main()
