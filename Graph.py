@@ -22,7 +22,7 @@ class Graph(nx.Graph):
             cost = self.hops[destination][u]
             cap = self[node][u]["remaining_capacity"]
             l.append((u, cap, cost))
-        return sorted(l, key=lambda x: x[2], reverse=dec) 
+        return sorted(l, key=lambda x: (x[2], x[1]), reverse=dec) 
         
     def read_edgelist(self, file="g.graph") -> dict:
         with open(file, 'r') as f:
