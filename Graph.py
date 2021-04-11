@@ -15,8 +15,6 @@ class Graph(nx.Graph):
         if file is not None:
             self.read_edgelist(file)
 
-    def get_nodes(self) -> list:
-        return list(self.edgelist.keys())
 
     def sorted_edgelist(self, node, destination, dec = False):
         l = []
