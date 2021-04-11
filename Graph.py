@@ -163,7 +163,72 @@ class Graph(nx.Graph):
             flows.append((intent, path))
         return flows
         
+    def topk_greedy_allocate(self, intents):
+        self.reset_capacities()
+        intents = sorted(intents, key=lambda x: x.required_bw, reverse=True)
+        flows = []
+        # self.reset_capacities()
+        for intent in intents:
+            source = intent.src_host
+            destination = intent.dst_host
+            req = intent.required_bw
+            paths = self.get_shortest_paths(source, destination, req)
+            if len(paths) == 0:
+                return False # No Solution
+            path = paths[0][0]
+            self.allocate_flow(path, req)
+            flows.append((intent, path))
+        return flows
 
+    # TODO: Convert to Binary Search
+    def filter_too_long(self, paths, hop_diff):
+        if len(paths) == 0:
+            return []
+        limit = len(paths[0][0]) + hop_diff
+        for i, (path, _) in enumerate(paths):
+            if len(path) > limit:
+                return paths[:i]
+        return paths
+
+    # TODO: Reimplement `shortest_simple_paths` to calculate capacity
+    def get_path_capacity(self, path, use_original_capacity=False):
+        capacity_key = "remaining_capacity"
+        if use_original_capacity:
+            capacity_key = "max_capacity"
+        if len(path) < 2:
+            raise Exception("Invalid path")
+        min_edge = self[path[0]][path[1]][capacity_key]
+        for u, v in pairwise(path):
+            min_edge = min(min_edge, self[u][v][capacity_key])
+
+        return min_edge
+
+    def get_shortest_paths(self, src, dst, required_capacity):
+        paths = nx.shortest_simple_paths(self, src, dst)
+        path_cap = []
+        for path in paths:
+            cap = self.get_path_capacity(path)
+            if required_capacity <= cap:
+                path_cap.append((path, cap))
+        path_cap = self.filter_too_long(path_cap, 3)
+        path_cap = list(sorted(path_cap, key=lambda x: (len(x[0]), x[1])))
+        return path_cap
+
+    def allocate_flow(self, path, req):
+        for i, node in enumerate(path[:-1]):
+            s, d = node, path[i+1]
+            self[s][d]["remaining_capacity"] -= req
+            
+    def allocate_single(self, intent: Intent):
+        source = intent.src_host
+        destination = intent.dst_host
+        req = intent.required_bw
+        paths = self.get_shortest_paths(source, destination, req)
+        if len(paths) == 0:
+                return False # No Solution
+        path = paths[0][0]
+        self.allocate_flow(path, req)
+        return (intent, path)
     def reset_capacities(self):
         for u, v in self.edges:
             self[u][v]["remaining_capacity"] = self[u][v]["max_capacity"]
