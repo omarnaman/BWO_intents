@@ -91,7 +91,7 @@ class Intent:
     def __init__(self, src_host, dst_host, required_bw):
         self.src_host = src_host
         self.dst_host = dst_host
-        self.required_bw = required_bw
+        self.required_bw = int(required_bw)
         self.path = None        # a list of BiLink
         self.flowRules = None   # a list of Flow
 
