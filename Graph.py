@@ -113,6 +113,23 @@ class Graph(nx.Graph):
         self._vis[source] = False
         return False
 
+    def astar_N(self, source, destination, min_link):
+        self._paths = []
+        self._vis = dict.fromkeys(self.nodes, False)
+        self._path = dict.fromkeys(self.nodes, None)
+        self.bfs(destination)
+        
+        res = self._astar(source, destination, min_link)
+        if not res:
+            return None
+        node = destination
+        path = []
+        while node is not None:
+            path.append(node)
+            node = self._path[node]
+
+        return list(reversed(path))
+
     def astar(self, source, destination, min_link):
         self._paths = []
         self._vis = dict.fromkeys(self.nodes, False)
@@ -128,8 +145,23 @@ class Graph(nx.Graph):
                 path.append(node)
                 node = rec_path[node]
 
-            print(list(reversed(path)))
-        return False
+            return list(reversed(path))
+        return None
+
+    def greedy_alloc(self, intents):
+        intents = sorted(intents, key=lambda x: x.required_bw, reverse=True)
+        flows = []
+        # self.reset_capacities()
+        for intent in intents:
+            source = intent.src_host
+            destination = intent.dst_host
+            req = intent.required_bw
+            path = self.astar(source, destination, req)
+            if path is None:
+                return False # No Solution
+            self.allocate_flow(path, req)
+            flows.append((intent, path))
+        return flows
         
 
 def main():
