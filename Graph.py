@@ -164,10 +164,9 @@ class Graph(nx.Graph):
         return flows
         
 
-def main():
-    g = Graph("g.graph")
-    # g.astar("1", "5", 5)
-    print(g.hops)
+    def reset_capacities(self):
+        for u, v in self.edges:
+            self[u][v]["remaining_capacity"] = self[u][v]["max_capacity"]
 
 if __name__=="__main__":
     main()
