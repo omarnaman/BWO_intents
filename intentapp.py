@@ -160,13 +160,28 @@ class StateManager():
             print("link disconnected ", swlinkmap_copy)
         
 
-    def add_intent(self, newIntent):
+    def add_intent(self, newIntent: Intent):
         print(f"\nAdding {newIntent}...\n")
 
-        path = ["of:0000000000000001", "of:0000000000000003", "of:0000000000000002"]
-        self.gen_flowrules_from_path(path, newIntent)
         self.intents.append(newIntent)
+        path = self.graph.astar(newIntent.src_host, newIntent.dst_host, newIntent.required_bw)
+        if path is None:
+            self.recalculate()
+            return
+        self.gen_flowrules_from_path(path, newIntent)
 
+    def recalculate(self):
+        flows = self.graph.greedy_alloc(self.intents)
+        if flows is None:
+            raise NotImplementedError("NO solution found, need to implement a resource sharing algorithm")
+            # Do Resource Sharing
+            return
+        # TODO: clear all flows
+        for flow in flows:
+            intent = flow[0]
+            path = flow[1]
+            self.gen_flowrules_from_path(intent, path)
+        
     def gen_flowrules_from_path(self, path, intent):
         # path is a list of switch ids [<switch for intent.src_host>, <switch for intent.dst_host>]
         if path is None or len(path) == 0: return
