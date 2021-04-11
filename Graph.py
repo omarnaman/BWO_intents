@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 
+from utilClasses import Intent
+import networkx as nx
+from networkx.utils import pairwise
 
-class Graph():
+
+class Graph(nx.Graph):
 
     hops = None
 
     def __init__(self, file=None) -> None:
-        self.edgelist = dict()
+        super(Graph, self).__init__()
         self.hops = None
         if file is not None:
             self.read_edgelist(file)
@@ -16,8 +20,9 @@ class Graph():
 
     def sorted_edgelist(self, node, destination, dec = False):
         l = []
-        for u, cap in self.edgelist[node]:
+        for u in self[node]:
             cost = self.hops[destination][u]
+            cap = self[node][u]["remaining_capacity"]
             l.append((u, cap, cost))
         return sorted(l, key=lambda x: x[2], reverse=dec) 
         
@@ -27,23 +32,17 @@ class Graph():
             for edge in edges:
                 if len(edge) < 2:
                     continue
-                s, d, cost = edge.split()
-                if s not in self.edgelist:
-                    self.edgelist[s] = []
-                if d not in self.edgelist:
-                    self.edgelist[d] = []
-                cost = int(cost)
-                self.edgelist[s].append((d, cost))
-                self.edgelist[d].append((s, cost))
+                s, d, cap = edge.split()
+                cap = int(cap)
+                self.add_edge(s, d, max_capacity=cap, remaining_capacity=cap)
         self.hops = dict.fromkeys(self.nodes)
         for key in self.hops:
             self.hops[key] = dict.fromkeys(self.nodes, None)
-        return self.edgelist
+        return self.edges
 
-    nodes = property(get_nodes)
 
     def init_hops_from_edgelist(self):
-        self.hops = dict.fromkeys(self.nodes)
+        self.hops = dict.fromkeys(self.nodes())
         for key in self.hops:
             self.hops[key] = dict.fromkeys(self.nodes, None)
 
@@ -59,7 +58,7 @@ class Graph():
                 s = q[0]
                 size -= 1
                 q = q[1:]
-                for d, _ in self.edgelist[s]:
+                for d in self[s]:
                     if vis[d]:
                         continue
                     self.hops[source][d] = cost + 1
@@ -79,7 +78,7 @@ class Graph():
             return True
         for d, cap, _ in self.sorted_edgelist(source, destination):
                 if cap < min_link:
-                    return False
+                    continue
                 if self._vis[d]:
                     continue
                 self._path[d] = source
@@ -105,7 +104,7 @@ class Graph():
 
         for d, cap, _ in self.sorted_edgelist(source, destination):
                 if cap < min_link:
-                    return False
+                    continue
                 if self._vis[d]:
                     continue
                 self._path[d] = source
