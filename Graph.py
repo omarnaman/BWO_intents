@@ -5,6 +5,10 @@ import networkx as nx
 from networkx.utils import pairwise
 
 
+CAP_VIRTUAL = "virtual_capacity"
+CAP_MAX = "max_capacity"
+CAP_REMAINING = "remaining_capacity"
+
 class Graph(nx.Graph):
 
     hops = None
@@ -15,12 +19,18 @@ class Graph(nx.Graph):
         if file is not None:
             self.read_edgelist(file)
 
-    
-    def sorted_edgelist(self, node, destination, dec = False):
+    def _get_capacity_key(self, use_virtual):
+        capacity_key = CAP_REMAINING
+        if use_virtual:
+            capacity_key = CAP_VIRTUAL
+        return capacity_key
+
+    def sorted_edgelist(self, node, destination, dec = False, use_virtual=False):
+        capacity_key = self._get_capacity_key(use_virtual)
         l = []
         for u in self[node]:
             cost = self.hops[destination][u]
-            cap = self[node][u]["remaining_capacity"]
+            cap = self[node][u][capacity_key]
             l.append((u, cap, cost))
         return sorted(l, key=lambda x: (x[2], x[1]), reverse=dec) 
         
@@ -149,9 +159,10 @@ class Graph(nx.Graph):
         return None
 
     def greedy_alloc(self, intents):
+        raise NotImplementedError("Not implemented to use virtual capacities")
         intents = sorted(intents, key=lambda x: x.required_bw, reverse=True)
         flows = []
-        # self.reset_capacities()
+        self.reset_capacities(use_virtual=True)
         for intent in intents:
             source = intent.src_host
             destination = intent.dst_host
@@ -164,24 +175,28 @@ class Graph(nx.Graph):
         return flows
     
     def topk_greedy_allocate(self, intents):
-        self.reset_capacities()
         intents = sorted(intents, key=lambda x: x.required_bw, reverse=True)
         flows = []
-        # self.reset_capacities()
+        self.reset_capacities(use_virtual=True)
         for intent in intents:
             source = intent.src_host
             destination = intent.dst_host
             req = intent.required_bw
-            paths = self.get_shortest_paths(source, destination, req)
+            paths = self.get_shortest_paths(source, destination, req, use_virtual=True)
             if len(paths) == 0:
-                return False # No Solution
+                return None # No Solution
             path = paths[0][0]
-            self.allocate_flow(path, req)
+            self.allocate_flow(path, req, use_virtual=True)
+            
             flows.append((intent, path))
-        return flows
+
+        self.reset_capacities(use_virtual=True)
+        for intent, path in flows:
+            self.allocate_flow(path, intent.required_bw)
+        return [path for _, path in flows]
 
     # TODO: Convert to Binary Search
-    def filter_too_long(self, paths, hop_diff):
+    def filter_too_long(self, paths, hop_diff=3):
         if len(paths) == 0:
             return []
         limit = len(paths[0][0]) + hop_diff
@@ -191,33 +206,33 @@ class Graph(nx.Graph):
         return paths
 
     # TODO: Reimplement `shortest_simple_paths` to calculate capacity
-    def get_path_capacity(self, path, use_original_capacity=False):
-        capacity_key = "remaining_capacity"
-        if use_original_capacity:
-            capacity_key = "max_capacity"
+    def get_path_capacity(self, path, use_virtual=False):
+        capacity_key = self._get_capacity_key(use_virtual)
         if len(path) < 2:
             raise Exception("Invalid path")
-        min_edge = self[path[0]][path[1]][capacity_key]
+        u, v = path[0], path[1]
+        min_edge = self[u][v][capacity_key]
         for u, v in pairwise(path):
             min_edge = min(min_edge, self[u][v][capacity_key])
 
         return min_edge
 
-    def get_shortest_paths(self, src, dst, required_capacity):
+    def get_shortest_paths(self, src, dst, required_capacity, use_virtual=False):
         paths = nx.shortest_simple_paths(self, src, dst)
         path_cap = []
         for path in paths:
-            cap = self.get_path_capacity(path)
+            cap = self.get_path_capacity(path, use_virtual)
             if required_capacity <= cap:
                 path_cap.append((path, cap))
         path_cap = self.filter_too_long(path_cap, 3)
         path_cap = list(sorted(path_cap, key=lambda x: (len(x[0]), x[1])))
         return path_cap
 
-    def allocate_flow(self, path, req):
+    def allocate_flow(self, path, req, use_virtual=False):
+        capacity_key = self._get_capacity_key(use_virtual)
         for i, node in enumerate(path[:-1]):
             s, d = node, path[i+1]
-            self[s][d]["remaining_capacity"] -= req
+            self[s][d][capacity_key] -= req
             
     def allocate_single(self, intent: Intent):
         source = intent.src_host
@@ -225,13 +240,15 @@ class Graph(nx.Graph):
         req = intent.required_bw
         paths = self.get_shortest_paths(source, destination, req)
         if len(paths) == 0:
-                return False # No Solution
+                return None # No Solution
         path = paths[0][0]
         self.allocate_flow(path, req)
-        return (intent, path)
-    def reset_capacities(self):
+        return path
+
+    def reset_capacities(self, use_virtual=False):
+        capacity_key = self._get_capacity_key(use_virtual)
         for u, v in self.edges:
-            self[u][v]["remaining_capacity"] = self[u][v]["max_capacity"]
+            self[u][v][capacity_key] = self[u][v][CAP_MAX]
 
 
 
@@ -251,19 +268,20 @@ def main(graph_file="g.graph", intents_file=None, online=False):
     g = Graph(graph_file)
     if not online:
         can = g.topk_greedy_allocate(intents)
-        if can == False:
+        if can is None:
             print("No Solution")
             return False
         for u, v in g.edges:
             print(f"{u}->{v}: {g[u][v]['remaining_capacity']}")
         return True
+
     elif online:
         for i, intent in enumerate(intents):
             res = g.allocate_single(intent)
-            if res == False:
+            if res is None:
                 print(f"Recalculating on intent {{{i}}}")
                 can = g.topk_greedy_allocate(intents[:i+1])
-                if can == False:
+                if can is None:
                     print("No Solution")
         return True
 
