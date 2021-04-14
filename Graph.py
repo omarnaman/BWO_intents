@@ -3,7 +3,7 @@
 from utilClasses import Intent
 import networkx as nx
 from networkx.utils import pairwise
-
+import graphUtilities
 
 CAP_VIRTUAL = "virtual_capacity"
 CAP_MAX = "max_capacity"
@@ -18,6 +18,16 @@ class Graph(nx.Graph):
         self.hops = None
         if file is not None:
             self.read_edgelist(file)
+
+    def draw(self):
+        graphUtilities.draw(self, labels=True)
+
+
+    def assign_capacities(self):
+        for s, d in self.edges:
+            cap = self[s][d]["bilink"].capacity
+            self[s][d][CAP_MAX] = cap
+            self[s][d][CAP_REMAINING] = cap
 
     def _get_capacity_key(self, use_virtual):
         capacity_key = CAP_REMAINING
@@ -179,21 +189,22 @@ class Graph(nx.Graph):
         flows = []
         self.reset_capacities(use_virtual=True)
         for intent in intents:
-            source = intent.src_host
-            destination = intent.dst_host
+            source = intent.src_host.switchport.device
+            destination = intent.dst_host.switchport.device
             req = intent.required_bw
             paths = self.get_shortest_paths(source, destination, req, use_virtual=True)
             if len(paths) == 0:
                 return None # No Solution
             path = paths[0][0]
-            self.allocate_flow(path, req, use_virtual=True)
+            if len(path) > 1:
+                self.allocate_flow(path, req, use_virtual=True)
             
             flows.append((intent, path))
 
         self.reset_capacities(use_virtual=True)
         for intent, path in flows:
             self.allocate_flow(path, intent.required_bw)
-        return [path for _, path in flows]
+        return flows
 
     # TODO: Convert to Binary Search
     def filter_too_long(self, paths, hop_diff=3):
@@ -208,6 +219,8 @@ class Graph(nx.Graph):
     # TODO: Reimplement `shortest_simple_paths` to calculate capacity
     def get_path_capacity(self, path, use_virtual=False):
         capacity_key = self._get_capacity_key(use_virtual)
+        if len(path) == 1:
+            return 10**10
         if len(path) < 2:
             raise Exception("Invalid path")
         u, v = path[0], path[1]
@@ -235,13 +248,15 @@ class Graph(nx.Graph):
             self[s][d][capacity_key] -= req
             
     def allocate_single(self, intent: Intent):
-        source = intent.src_host
-        destination = intent.dst_host
+        source = intent.src_host.switchport.device
+        destination = intent.dst_host.switchport.device
         req = intent.required_bw
         paths = self.get_shortest_paths(source, destination, req)
         if len(paths) == 0:
                 return None # No Solution
         path = paths[0][0]
+        if len(path) == 1:
+            return path
         self.allocate_flow(path, req)
         return path
 

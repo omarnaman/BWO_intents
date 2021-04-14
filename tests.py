@@ -19,6 +19,10 @@ class TestGraph(unittest.TestCase):
         i = 1
         self.assertTrue(self.do_work(i), f"Failed Graph{i}")
     
+    def test_2(self):
+        i = 2
+        self.assertTrue(self.do_work(i), f"Failed Graph{i}")
+
     def test_1_online(self):
         i = 1
         self.assertTrue(self.do_work(i, True), f"Failed Graph{i}")

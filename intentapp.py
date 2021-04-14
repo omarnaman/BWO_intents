@@ -6,6 +6,7 @@ import requests
 import threading
 import traceback
 import os
+import uuid
 
 from utilClasses import *
 from Graph import Graph
@@ -49,7 +50,7 @@ class StateManager():
     def __init__(self):
         self.graph = None
         self.hosts = dict()     # {hostId: <Host>}
-        self.intents = []       # a list of Intent
+        self.intents = {}       # a map of Intent
 
 
     def retrieve_topo_from_ONOS(self):
@@ -65,37 +66,35 @@ class StateManager():
                 self.hosts[host['id']] = Host(host)
         
         # Initiate graph.edgelist
-        # Get links
+        # Get links: "Does not return links connected to hosts"
         url = '{}/links'.format(BASE_URL)
         response = requests.get(url, auth=AUTH).json()
         if 'links' in response:
             for link in response['links']:
                 src_swId = link['src']['device']
                 dst_swId = link['dst']['device']
-
-                swlinkmap = graph.edgelist
-                # if BiLink btw src_swId and dst_swId already created
-                if dst_swId in swlinkmap and src_swId in swlinkmap[dst_swId]:
-                    bilink = swlinkmap[dst_swId][src_swId]
-                else:
+                graph.add_edge(src_swId, dst_swId)
+                # # if BiLink btw src_swId and dst_swId already created
+                # if dst_swId in swlinkmap and src_swId in swlinkmap[dst_swId]:
+                #     bilink = swlinkmap[dst_swId][src_swId]
+                if True:
                     sw1 = SwitchPort(link['src'])
                     sw2 = SwitchPort(link['dst'])
-
+                    print(sw1, sw2)
                     if 'annotations' in link and 'bandwidth' in link['annotations']:
                         bw = int(link['annotations']['bandwidth'])
                     else:
                         bw = BiLink.DEFAULT_CAPACITY
                     
                     bilink = BiLink(sw1, sw2, bw)
-                # associate BiLink with link <src_swId -- dst_swId>
-                if src_swId in swlinkmap:
-                    swlinkmap[src_swId][dst_swId] = bilink
-                else:
-                    swlinkmap[src_swId] = {dst_swId: bilink}
+                    # associate BiLink with link <src_swId -- dst_swId>
+                    graph[src_swId][dst_swId]["bilink"] = bilink
 
         # Initiate graph.hops
         graph.init_hops_from_edgelist()
+        graph.assign_capacities()
         self.graph = graph
+        self.graph.draw()
     
     def update_topo_from_ONOS(self):
         print(f"\nUpdating Graph...\n")
@@ -117,27 +116,27 @@ class StateManager():
             print("host disconnected ", hosts_list)
         
         # Update self.graph.edgelist
-        swlinkmap = self.graph.edgelist
-        # make a copy of current links
-        swlinkmap_copy = dict.fromkeys(swlinkmap.keys())
-        for key in swlinkmap.keys():
-            swlinkmap_copy[key] = dict.fromkeys(swlinkmap[key].keys())
+        # swlinkmap = self.graph.edgelist
+        # # make a copy of current links
+        # swlinkmap_copy = dict.fromkeys(swlinkmap.keys())
+        # for key in swlinkmap.keys():
+        #     swlinkmap_copy[key] = dict.fromkeys(swlinkmap[key].keys())
         
         # Get links
         url = '{}/links'.format(BASE_URL)
         response = requests.get(url, auth=AUTH).json()
+        disconnected_links = []
         if 'links' in response:
             for link in response['links']:
                 src_swId = link['src']['device']
                 dst_swId = link['dst']['device']
 
                 # if link <src_swId -- dst_swId> in self.graph.edgelist
-                if src_swId in swlinkmap and dst_swId in swlinkmap[src_swId]:
-                    del swlinkmap_copy[src_swId][dst_swId]
-                else:
+
+                if True:
                     # if BiLink btw src_swId and dst_swId already created in self.graph.edgelist
-                    if dst_swId in swlinkmap and src_swId in swlinkmap[dst_swId]:
-                        bilink = swlinkmap[dst_swId][src_swId]
+                    if (src_swId, dst_swId) in self.graph.edges:
+                        bilink = self.graph[dst_swId][src_swId]["bilink"]
                     else:   # create a new BiLink
                         sw1 = SwitchPort(link['src'])
                         sw2 = SwitchPort(link['dst'])
@@ -150,10 +149,7 @@ class StateManager():
                         bilink = BiLink(sw1, sw2, bw)
 
                     # associate BiLink with link <src_swId -- dst_swId>
-                    if src_swId in swlinkmap:
-                        swlinkmap[src_swId][dst_swId] = bilink
-                    else:
-                        swlinkmap[src_swId] = {dst_swId: bilink}
+                    self.graph[src_swId][dst_swId]["bilink"] = bilink
         
         if True in [len(swlinkmap_copy[k]) > 0  for k in swlinkmap_copy]:
             # some link disconnected
@@ -162,51 +158,65 @@ class StateManager():
 
     def add_intent(self, newIntent: Intent):
         print(f"\nAdding {newIntent}...\n")
-
-        self.intents.append(newIntent)
-        path = self.graph.astar(newIntent.src_host, newIntent.dst_host, newIntent.required_bw)
+        intentUUID = uuid.uuid4().hex
+        newIntent.id = intentUUID
+        self.intents[intentUUID] = newIntent
+        path = self.graph.allocate_single(newIntent)
+        print(path)
         if path is None:
+            print("No immediate solution found, recalculating")
             self.recalculate()
             return
-        self.gen_flowrules_from_path(path, newIntent)
+        self.gen_flowrules_from_path(path, intentUUID)
 
     def recalculate(self):
-        flows = self.graph.greedy_alloc(self.intents)
+        flows = self.graph.topk_greedy_allocate(self.intents.values())
         if flows is None:
             raise NotImplementedError("NO solution found, need to implement a resource sharing algorithm")
             # Do Resource Sharing
             return
-        # TODO: clear all flows
-        for flow in flows:
-            intent = flow[0]
-            path = flow[1]
-            self.gen_flowrules_from_path(intent, path)
-        
-    def gen_flowrules_from_path(self, path, intent):
+        self.clear_all_flows()
+        for intent, path in flows:
+            print(intent, path)
+            self.gen_flowrules_from_path(path, intent.id)
+
+    def clear_all_flows(self):
+        for intent in self.intents.values():
+            if intent.flowRules is not None:
+                for rule in intent.flowRules:
+                    rule.delete()
+
+    def gen_flowrules_from_path(self, path, intentUUID):
         # path is a list of switch ids [<switch for intent.src_host>, <switch for intent.dst_host>]
         if path is None or len(path) == 0: return
         
+        intent = self.intents[intentUUID]
         flowRules = []
         src_mac = intent.src_host.mac
         dst_mac = intent.dst_host.mac
         src_host_port = intent.src_host.switchport.port
         dst_host_port = intent.dst_host.switchport.port
 
-        swlinkmap = self.graph.edgelist
         prevBiLink = None
 
         for i in range(len(path)):
             # set two rules on switch path[i]: in_port => out_port, out_port => in_port
-            if i == 0:
+            
+            if len(path) == 1:
                 in_port = src_host_port
-                prevBiLink = swlinkmap[path[0]][path[1]]
+                out_port = dst_host_port
+            # First Switch
+            elif i == 0:
+                in_port = src_host_port
+                prevBiLink = self.graph[path[0]][path[1]]["bilink"]
                 out_port = prevBiLink.get_port_of_switch(path[0])
+            # Last Switch
             elif i == len(path)-1:
                 in_port = prevBiLink.get_port_of_switch(path[i])
                 out_port = dst_host_port
             else:
                 in_port = prevBiLink.get_port_of_switch(path[i])
-                prevBiLink = swlinkmap[path[i]][path[i+1]]
+                prevBiLink = self.graph[path[i]][path[i+1]]["bilink"]
                 out_port = prevBiLink.get_port_of_switch(path[i])
 
             rule = Flow(path[i], src_mac, dst_mac, in_port, out_port)
@@ -217,7 +227,7 @@ class StateManager():
         for rule in flowRules:
             rule.apply()
         
-        intent.flowRules = flowRules
+        self.intents[intentUUID].flowRules = flowRules.copy()
 
 
 class StateThread(threading.Thread):
@@ -225,7 +235,7 @@ class StateThread(threading.Thread):
 
     def __init__(self, stateManager):
         self._stopevent = threading.Event()
-        self.stateManager = stateManager
+        self.stateManager:StateManager = stateManager
         self._pendinginput = set()
         threading.Thread.__init__(self)
 
@@ -234,7 +244,7 @@ class StateThread(threading.Thread):
 
         while not self._stopevent.isSet():
             # update topology in stateManager
-            self.stateManager.update_topo_from_ONOS()
+            # self.stateManager.update_topo_from_ONOS()
 
             while self._pendinginput:
                 userinput = self._pendinginput.pop()
@@ -264,7 +274,7 @@ class StateThread(threading.Thread):
 
     def stop(self):
         self._stopevent.set()
-
+        self.stateManager.clear_all_flows()
     def add_input(self, userinput):
         self._pendinginput.add(userinput)  
 
