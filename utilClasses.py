@@ -1,5 +1,6 @@
 import json
 import requests
+import uuid
 
 BASE_URL = 'http://localhost:8181/onos/v1'
 AUTH = ('onos', 'rocks')
@@ -88,15 +89,19 @@ class Flow:
         return res
 
 class Intent:
+
+    id = None
+    
     def __init__(self, src_host, dst_host, required_bw):
+        self.id = uuid.uuid4().hex
         self.src_host = src_host
         self.dst_host = dst_host
         self.required_bw = int(required_bw)
         self.path = None        # a list of BiLink
-        self.flowRules = None   # a list of Flow
+        self.flowRules = None   # a list of Flows
 
     def __repr__(self):
-        return 'Intent{{ {} -- {}, {} }}'.format(self.src_host.id, self.dst_host.id, self.required_bw)
+        return '{} : Intent{{ {} -- {}, {} }}'.format(self.id, self.src_host.id, self.dst_host.id, self.required_bw)
 
 class BiLink:   # bidirectional link
     DEFAULT_CAPACITY = 10
@@ -105,7 +110,7 @@ class BiLink:   # bidirectional link
         self.switch1 = switch1      # type: SwitchPort
         self.switch2 = switch2      # type: SwitchPort
         self.capacity = capacity
-        self.intents = []
+        self.intents = {}
      
     def __repr__(self):
         return 'BiLink{{ {} -- {}, {} }}'.format(self.switch1.device, self.switch2.device, self.capacity)

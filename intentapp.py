@@ -73,14 +73,12 @@ class StateManager():
             for link in response['links']:
                 src_swId = link['src']['device']
                 dst_swId = link['dst']['device']
-                graph.add_edge(src_swId, dst_swId)
                 # # if BiLink btw src_swId and dst_swId already created
                 # if dst_swId in swlinkmap and src_swId in swlinkmap[dst_swId]:
                 #     bilink = swlinkmap[dst_swId][src_swId]
                 if True:
                     sw1 = SwitchPort(link['src'])
                     sw2 = SwitchPort(link['dst'])
-                    print(sw1, sw2)
                     if 'annotations' in link and 'bandwidth' in link['annotations']:
                         bw = int(link['annotations']['bandwidth'])
                     else:
@@ -88,7 +86,7 @@ class StateManager():
                     
                     bilink = BiLink(sw1, sw2, bw)
                     # associate BiLink with link <src_swId -- dst_swId>
-                    graph[src_swId][dst_swId]["bilink"] = bilink
+                graph.add_edge(src_swId, dst_swId, bilink=bilink)
 
         # Initiate graph.hops
         graph.init_hops_from_edgelist()
@@ -97,7 +95,7 @@ class StateManager():
         self.graph.draw()
     
     def update_topo_from_ONOS(self):
-        print(f"\nUpdating Graph...\n")
+        # print(f"\nUpdating Graph...\n")
 
         # Update self.hosts
         hosts_list = list(self.hosts.keys())    # make a list of current host ids
@@ -125,18 +123,19 @@ class StateManager():
         # Get links
         url = '{}/links'.format(BASE_URL)
         response = requests.get(url, auth=AUTH).json()
-        disconnected_links = []
+        temp_graph = Graph()
+        temp_graph.add_edges_from(self.graph.edges)
         if 'links' in response:
             for link in response['links']:
                 src_swId = link['src']['device']
                 dst_swId = link['dst']['device']
 
-                # if link <src_swId -- dst_swId> in self.graph.edgelist
 
                 if True:
                     # if BiLink btw src_swId and dst_swId already created in self.graph.edgelist
                     if (src_swId, dst_swId) in self.graph.edges:
                         bilink = self.graph[dst_swId][src_swId]["bilink"]
+                        temp_graph.remove_edge(src_swId, dst_swId, virtual=True)
                     else:   # create a new BiLink
                         sw1 = SwitchPort(link['src'])
                         sw2 = SwitchPort(link['dst'])
@@ -145,29 +144,36 @@ class StateManager():
                             bw = int(link['annotations']['bandwidth'])
                         else:
                             bw = BiLink.DEFAULT_CAPACITY
-                    
+                        print(f"Link {src_swId}--{dst_swId} Discovered")
                         bilink = BiLink(sw1, sw2, bw)
+                        self.graph.add_edge(sw1, sw2, bilink=bilink)
 
-                    # associate BiLink with link <src_swId -- dst_swId>
-                    self.graph[src_swId][dst_swId]["bilink"] = bilink
-        
-        if True in [len(swlinkmap_copy[k]) > 0  for k in swlinkmap_copy]:
-            # some link disconnected
-            print("link disconnected ", swlinkmap_copy)
-        
+        removed_intents = set()
+        for edge in temp_graph.edges:
+            print(f"Link: {edge} disconnected")
+            intents = self.graph.remove_edge(*edge)
+            for intent in intents:
+                removed_intents.add(intent)
+
+        # Recalculate intents affected by the removed edges
+        for intent_id in removed_intents:
+            print(f"reinstalling intent {self.intents[intent_id]}")
+            self.add_intent(self.intents[intent_id])
+        del temp_graph
 
     def add_intent(self, newIntent: Intent):
         print(f"\nAdding {newIntent}...\n")
-        intentUUID = uuid.uuid4().hex
-        newIntent.id = intentUUID
-        self.intents[intentUUID] = newIntent
+
+        if newIntent.id not in self.intents:
+            self.intents[newIntent.id] = newIntent
+
         path = self.graph.allocate_single(newIntent)
-        print(path)
         if path is None:
             print("No immediate solution found, recalculating")
             self.recalculate()
             return
-        self.gen_flowrules_from_path(path, intentUUID)
+        self.intents[newIntent.id].path = path.copy()
+        self.gen_flowrules_from_path(newIntent.id)
 
     def recalculate(self):
         flows = self.graph.topk_greedy_allocate(self.intents.values())
@@ -178,26 +184,43 @@ class StateManager():
         self.clear_all_flows()
         for intent, path in flows:
             print(intent, path)
-            self.gen_flowrules_from_path(path, intent.id)
+            self.gen_flowrules_from_path(intent.id)
 
     def clear_all_flows(self):
         for intent in self.intents.values():
             if intent.flowRules is not None:
                 for rule in intent.flowRules:
                     rule.delete()
-
-    def gen_flowrules_from_path(self, path, intentUUID):
-        # path is a list of switch ids [<switch for intent.src_host>, <switch for intent.dst_host>]
-        if path is None or len(path) == 0: return
         
+        del self.intents
+        self.intents = {}
+
+    def list_intents(self):
+        for intent in self.intents.values():
+            print(f"- {intent}")
+    
+    def remove_intent(self, intent_id):
+        if intent_id not in self.intents:
+            print(f"Intent {intent_id} not found")
+            return
+        self.graph.remove_flow(self.intents[intent_id])
+        for flow in self.intents[intent_id].flowRules:
+            flow.delete()
+        del self.intents[intent_id]
+
+    def gen_flowrules_from_path(self, intentUUID):
+        # path is a list of switch ids [<switch for intent.src_host>, <switch for intent.dst_host>]
         intent = self.intents[intentUUID]
+        path = intent.path
+        if path is None or len(path) == 0: return
+        print(path)
         flowRules = []
         src_mac = intent.src_host.mac
         dst_mac = intent.dst_host.mac
         src_host_port = intent.src_host.switchport.port
         dst_host_port = intent.dst_host.switchport.port
 
-        prevBiLink = None
+        prevBiLink: BiLink = None
 
         for i in range(len(path)):
             # set two rules on switch path[i]: in_port => out_port, out_port => in_port
@@ -244,32 +267,46 @@ class StateThread(threading.Thread):
 
         while not self._stopevent.isSet():
             # update topology in stateManager
-            # self.stateManager.update_topo_from_ONOS()
+            self.stateManager.update_topo_from_ONOS()
 
             while self._pendinginput:
-                userinput = self._pendinginput.pop()
+                # Fastest way to get the first element of a set without popping
+                for userinput in self._pendinginput: break
                 print(f"\nProcessing Input '{userinput}'...\n")
+                args = userinput.split()
+                command = args[0]
+                if len(args) > 1:
+                    args = args[1:]
                 try:
-                    command, h1, h2, bw = userinput.split()
-                    if not h1.endswith('/None'):    # treat h1 as a number
-                        h1 = convert_num_to_hostid(h1)
-                    if not h2.endswith('/None'):    # treat h2 as a number
-                        h2 = convert_num_to_hostid(h2)
-                    bw = int(bw)    # treat bw as a number
-                    hosts = self.stateManager.hosts
-                    assert (h1 in hosts), f"HostId {h1} is invalid"
-                    assert (h2 in hosts), f"HostId {h2} is invalid"
-                    
                     if command == 'add':
+                        h1, h2, bw = args
+                        if not h1.endswith('/None'):    # treat h1 as a number
+                            h1 = convert_num_to_hostid(h1)
+                        if not h2.endswith('/None'):    # treat h2 as a number
+                            h2 = convert_num_to_hostid(h2)
+                        bw = int(bw)    # treat bw as a number
+                        hosts = self.stateManager.hosts
+                        assert (h1 in hosts), f"HostId {h1} is invalid"
+                        assert (h2 in hosts), f"HostId {h2} is invalid"
+                    
                         newIntent = Intent(hosts[h1], hosts[h2], bw)
                         self.stateManager.add_intent(newIntent)
+
+                    elif command in ["list", "ls"]:
+                        self.stateManager.list_intents()
+                    elif command in ["rm", "delete", "remove"]:
+                        intent_id = args[0]
+                        if intent_id == "all":
+                            self.stateManager.clear_all_flows()
+                        else:
+                            self.stateManager.remove_intent(intent_id)
                     else:
                         print(f"Command {command} not supported")
 
                 except Exception as e:
                     print(f"Failed to process input '{userinput}': " + str(e))
                     traceback.print_exc()
-            
+                self._pendinginput.pop()
             time.sleep(self.POLLING_INTERVAL)
 
     def stop(self):
@@ -300,6 +337,8 @@ def main():
         userinput = ''
         while True:
             # Ask for user input
+            if stateThread._pendinginput:
+                continue
             userinput = input("Enter command or 'exit': ")
             if userinput != 'exit':
                 stateThread.add_input(userinput)
