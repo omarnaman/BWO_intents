@@ -152,7 +152,7 @@ class Graph(nx.Graph):
             self.allocate_flow(intent)
         return flows
     
-    def topk_greedy_allocate(self, intents):
+    def topk_greedy_allocate(self, intents, full_virtual=False):
         intents = sorted(intents, key=lambda x: x.required_bw, reverse=True)
         flows = []
         self.reset_capacities(use_virtual=True)
@@ -172,6 +172,9 @@ class Graph(nx.Graph):
             if len(path) > 1:
                 self.allocate_flow(intent, use_virtual=True)
             flows.append(intent)
+
+        if full_virtual:
+            return True
 
         self.reset_capacities(use_virtual=True)
         for intent in flows:
@@ -282,7 +285,22 @@ class Graph(nx.Graph):
             self[u][v][CAP_REMAINING] += intent.required_bw
             del self[u][v]["bilink"].intents[intent.id]
 
-        
+    def find_best_solution(self, intents, new_intent_id):
+        temp_intents = intents.copy()
+        l = 0
+        r = intents[new_intent_id].required_bw
+        res = -1
+        while l<=r:
+            mid = (l + r)>>1
+            temp_intents[new_intent_id].required_bw = mid
+            can = self.topk_greedy_allocate(temp_intents.values(), full_virtual=True)
+            if can:
+                l = mid + 1
+                res = mid
+            else:
+                r = mid - 1
+        return res
+
 def main(graph_file="g.graph", intents_file=None, online=False):
     if intents_file is None:
        intents = [Intent("h1", "h2", 7), Intent("3", "h1", 2)]

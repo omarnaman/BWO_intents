@@ -170,14 +170,21 @@ class StateManager():
         path = self.graph.allocate_single(newIntent)
         if path is None:
             print("No immediate solution found, recalculating")
-            self.recalculate()
+            self.recalculate(newIntent.id)
             return
         self.intents[newIntent.id].path = path.copy()
         self.gen_flowrules_from_path(newIntent.id)
 
-    def recalculate(self):
+    def recalculate(self, new_intent_id):
         flows = self.graph.topk_greedy_allocate(self.intents.values())
         if flows is None:
+            res = self.graph.find_best_solution(self.intents, new_intent_id)
+            if res <= 0:
+                print("No solution can be found for this intent")
+            else:
+                print(f"This intent can be allocated with a maximum capacity of {res}")
+            del self.intents[new_intent_id]
+            return
             raise NotImplementedError("NO solution found, need to implement a resource sharing algorithm")
             # Do Resource Sharing
             return
