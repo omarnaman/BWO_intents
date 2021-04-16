@@ -197,8 +197,7 @@ class Graph(nx.Graph):
                     if candidate_cap < min_cap:
                         best_path = candidate_path
                         min_cap = candidate_cap
-            return best_path
-        return None
+        return best_path
 
     # TODO: Reimplement `shortest_simple_paths` to calculate capacity
     def get_path_capacity(self, path, use_virtual=False):
