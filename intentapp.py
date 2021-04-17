@@ -111,8 +111,9 @@ class StateManager():
         
         if hosts_list:
             # some host disconnected
-            print("host disconnected ", hosts_list)
-        
+            print("hosts disconnected ", hosts_list)
+            for host in hosts_list:
+                del self.hosts[host]
         # Update self.graph.edgelist
         # swlinkmap = self.graph.edgelist
         # # make a copy of current links
