@@ -175,12 +175,11 @@ class Graph(nx.Graph):
         if full_virtual:
             return True
 
-        self.reset_capacities(use_virtual=True)
+        self.reset_capacities()
         for intent in flows:
             self.allocate_flow(intent)
         return flows
 
-    # TODO: Convert to Binary Search
     def filter_too_long(self, paths, required_bw, use_virtual=False):
         best_path = None
         min_cap = None
@@ -194,7 +193,7 @@ class Graph(nx.Graph):
                     if len(candidate_path) > limit:
                         return best_path
                     candidate_cap = self.get_path_capacity(candidate_path, use_virtual)
-                    if candidate_cap < min_cap:
+                    if candidate_cap < min_cap and candidate_cap >= required_bw:
                         best_path = candidate_path
                         min_cap = candidate_cap
         return best_path
@@ -223,8 +222,7 @@ class Graph(nx.Graph):
         path = intent.path
         req = intent.required_bw
         intent_uuid = intent.id
-        for i, node in enumerate(path[:-1]):
-            s, d = node, path[i+1]
+        for s, d in pairwise(path):
             self[s][d][capacity_key] -= req
             self[s][d]["bilink"].intents[intent_uuid] = intent
             
@@ -266,6 +264,8 @@ class Graph(nx.Graph):
         capacity_key = self._get_capacity_key(use_virtual)
         for u, v in self.edges:
             self[u][v][capacity_key] = self[u][v][CAP_MAX]
+            if not use_virtual:
+                self[u][v]["bilink"].intents.clear()
 
     def remove_edge(self, u, v, virtual=False):
         try:

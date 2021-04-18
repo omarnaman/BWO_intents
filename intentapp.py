@@ -180,6 +180,7 @@ class StateManager():
         flows = self.graph.topk_greedy_allocate(self.intents.values())
         if flows is None:
             res = self.graph.find_best_solution(self.intents, new_intent_id)
+            
             if res <= 0:
                 print("No solution can be found for this intent")
             else:
@@ -189,19 +190,20 @@ class StateManager():
             raise NotImplementedError("NO solution found, need to implement a resource sharing algorithm")
             # Do Resource Sharing
             return
-        self.clear_all_flows()
-        for intent, path in flows:
-            print(intent, path)
+        
+        self.clear_all_flows(soft_clear=True)
+        for intent in flows:
+            print(intent)
             self.gen_flowrules_from_path(intent.id)
 
-    def clear_all_flows(self):
+    def clear_all_flows(self, soft_clear=False):
         for intent in self.intents.values():
             if intent.flowRules is not None:
                 for rule in intent.flowRules:
                     rule.delete()
-        
-        del self.intents
-        self.intents = {}
+        if not soft_clear:
+            del self.intents
+            self.intents = {}
 
     def list_intents(self):
         for intent in self.intents.values():
