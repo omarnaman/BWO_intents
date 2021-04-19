@@ -1,4 +1,4 @@
-# BWO: A bandwidth optimization service fro IBNs
+# BWO: A bandwidth optimization service for IBNs
 An service for optimizing the utilization of bandwidth in Software Defined Networks (SDNs) that use Intent Based Networking (IBN)
 
 # Contributors
