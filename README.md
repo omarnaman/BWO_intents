@@ -16,7 +16,7 @@ An service for optimizing the utilization of bandwidth in Software Defined Netwo
 
 ## BWO Commands
 BWO currently supports four types of commands:
-1. Adding Intents: `add {src_host} {dst_host}`
+1. Adding Intents: `add {src_host} {dst_host} {Demand}`
 2. Listing Intents: `(list | ls)`
 3. Removing intents: `(rm | remove | delete) ({Intent ID} | all)`
 4. Exiting BWO: `exit`
