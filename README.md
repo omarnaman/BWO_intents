@@ -3,7 +3,7 @@ An service for optimizing the utilization of bandwidth in Software Defined Netwo
 
 # Contributors
 * Jane Wen (@janenxiao)
-* Omar Naman (@sudo-Smiley)
+* Omar Naman (@omarnaman)
 
 # Getting Started
 * Start off by changing the value of `BASE_URL` in `utilClasses.py` to match the address of the ONOS controller.
